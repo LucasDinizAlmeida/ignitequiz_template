@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FlatList, View } from 'react-native';
+import { Button, FlatList, View } from 'react-native';
 import { Trophy } from 'phosphor-react-native';
 import { useNavigation } from '@react-navigation/native';
 
@@ -13,6 +13,7 @@ import { QUIZZES } from '../../data/quizzes';
 export function Home() {
   const [quizzes, setQuizzes] = useState(QUIZZES);
   const [levels, setLevels] = useState([1, 2, 3]);
+
 
   const { navigate } = useNavigation();
 
@@ -41,6 +42,8 @@ export function Home() {
         onPress={() => navigate('history')}
       />
 
+  
+
       <View style={styles.levels}>
         <Level title="Fácil" type="EASY" onPress={() => handleLevelFilter(1)} isChecked={levels.includes(1)} />
         <Level title="Médio" type="MEDIUM" onPress={() => handleLevelFilter(2)} isChecked={levels.includes(2)} />
@@ -50,8 +53,9 @@ export function Home() {
       <FlatList
         data={quizzes}
         keyExtractor={item => item.id}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <QuizCard
+            index={index}
             data={item}
             onPress={() => navigate('quiz', { id: item.id })}
           />
