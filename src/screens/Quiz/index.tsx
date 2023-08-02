@@ -1,14 +1,27 @@
 import { useEffect, useState } from 'react';
-import { Alert, Text, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming, interpolate, Easing, useAnimatedScrollHandler, Extrapolate } from 'react-native-reanimated';
+import { Alert, Text, View, BackHandler } from 'react-native';
+import Animated, { 
+  useAnimatedStyle, 
+  useSharedValue, 
+  withSequence, 
+  withTiming, 
+  interpolate, 
+  Easing, 
+  useAnimatedScrollHandler, 
+  Extrapolate,
+  runOnJS
+} from 'react-native-reanimated';
 
 import { useNavigation, useRoute } from '@react-navigation/native';
+
+import * as Haptics from 'expo-haptics'
 
 import { styles } from './styles';
 
 import { QUIZ } from '../../data/quiz';
 import { historyAdd } from '../../storage/quizHistoryStorage';
 
+import { OverlayFeedback } from  '../../components/OverlayFeedback'
 import { Loading } from '../../components/Loading';
 import { Question } from '../../components/Question';
 import { QuizHeader } from '../../components/QuizHeader';
@@ -16,6 +29,8 @@ import { ConfirmButton } from '../../components/ConfirmButton';
 import { OutlineButton } from '../../components/OutlineButton';
 import { ProgressBar } from '../../components/ProgressBar';
 import { THEME } from '../../styles/theme';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Audio } from 'expo-av';
 
 interface Params {
   id: string;
@@ -23,27 +38,75 @@ interface Params {
 
 type QuizProps = typeof QUIZ[0];
 
+const CARD_INCLINATION = 10
+const CARD_SKIP_AREA = (-200)
+
 export function Quiz() {
   const [points, setPoints] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [quiz, setQuiz] = useState<QuizProps>({} as QuizProps);
   const [alternativeSelected, setAlternativeSelected] = useState<null | number>(null);
+  const [statusReply, setStatusReply] = useState(0)
 
 
   const shake = useSharedValue(0)
   const scrollY = useSharedValue(0)
+  const cardPosition = useSharedValue(0)
 
   const { navigate } = useNavigation();
 
   const route = useRoute();
   const { id } = route.params as Params;
 
+  async function playSound(isCorrect: boolean) {
+    const file = isCorrect? require('../../assets/correct.mp3') : require('../../assets/wrong.mp3')
+
+    const { sound } = await Audio.Sound.createAsync(file, { shouldPlay: true })
+
+    await sound.setPositionAsync(0)
+    await sound.playAsync()
+  }
+
   const scrollHandle = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y
     }
   })
+
+
+  const onPan = Gesture
+  .Pan()
+  .activateAfterLongPress(200)
+  .onUpdate((event) => {
+    const moveToLeft = event.translationX < 0
+
+    if(moveToLeft) {
+      cardPosition.value = event.translationX
+    }
+  })
+  .onEnd((event) => {
+    if(event.translationX < CARD_SKIP_AREA) {
+      runOnJS(handleSkipConfirm)()
+    }
+
+    cardPosition.value = withTiming(0)
+  })
+
+
+  const dragStyles = useAnimatedStyle(() => {
+
+    const rotateZ = cardPosition.value / CARD_INCLINATION
+
+
+    return {
+      transform: [
+        { translateX: cardPosition.value},
+        { rotateZ: `${rotateZ}deg` }
+      ]
+    }
+  })
+
 
   const fixedProgressBarStyle = useAnimatedStyle(() => {
     return {
@@ -85,10 +148,17 @@ export function Quiz() {
 
 
 
-  function shakeAnimation() {
+  async function shakeAnimation() {
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+
     shake.value = withSequence(
       withTiming(3, { duration: 400, easing: Easing.bounce }),
-      withTiming(0)
+      withTiming(0, undefined, (finished) => {
+        'worklet'
+        if(finished) {
+          runOnJS(handleNextQuestion)()
+        }
+      })
     )
   }
 
@@ -144,8 +214,11 @@ export function Quiz() {
 
     if (quiz.questions[currentQuestion].correct === alternativeSelected) {
       setPoints(prevState => prevState + 1);
+      await playSound(true)
+      setStatusReply(1)
     } else {
-      handleNextQuestion()
+      await playSound(true)
+      setStatusReply(2)
       shakeAnimation()
     }
 
@@ -182,12 +255,23 @@ export function Quiz() {
     }
   }, [points]);
 
+  useEffect(() => {
+    const backHandle = BackHandler.addEventListener('hardwareBackPress', handleStop)
+
+    return () => backHandle.remove()
+  }, [])
+
   if (isLoading) {
     return <Loading />
   }
 
   return (
     <View style={styles.container}>
+
+      <OverlayFeedback 
+        status={statusReply}
+      />
+
       <Animated.View style={fixedProgressBarStyle}>
         <Text style={styles.title}>
           {quiz.title}
@@ -211,15 +295,19 @@ export function Quiz() {
             totalOfQuestions={quiz.questions.length}
           />
         </Animated.View>
-          <Animated.View style={questionAnimatedStyle}>
+          <GestureDetector gesture={onPan}>
+            <Animated.View style={[questionAnimatedStyle, dragStyles]}>
 
-            <Question
-              key={quiz.questions[currentQuestion].title}
-              question={quiz.questions[currentQuestion]}
-              alternativeSelected={alternativeSelected}
-              setAlternativeSelected={setAlternativeSelected}
-            />
-          </Animated.View>
+              <Question
+                key={quiz.questions[currentQuestion].title}
+                question={quiz.questions[currentQuestion]}
+                alternativeSelected={alternativeSelected}
+                setAlternativeSelected={setAlternativeSelected}
+                onUnmount={() => setStatusReply(0)}
+              />
+            </Animated.View>
+          </GestureDetector>
+
         <View style={styles.footer}>
           <OutlineButton title="Parar" onPress={handleStop} />
           <ConfirmButton onPress={handleConfirm} />
