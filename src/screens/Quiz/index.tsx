@@ -217,7 +217,7 @@ export function Quiz() {
       await playSound(true)
       setStatusReply(1)
     } else {
-      await playSound(true)
+      await playSound(false)
       setStatusReply(2)
       shakeAnimation()
     }
